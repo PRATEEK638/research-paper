@@ -1,0 +1,307 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{url}
+\setlength{\textfloatsep}{6pt plus 2pt minus 2pt}
+\setlength{\floatsep}{6pt plus 2pt minus 2pt}
+\setlength{\intextsep}{6pt plus 2pt minus 2pt}
+\setlength{\abovecaptionskip}{3pt}
+\setlength{\belowcaptionskip}{2pt}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{Local vs. Cloud: A comparative evaluation of On-Device and API-Based Large Language Model Agents for Desktop Automation}
+
+\author{
+\IEEEauthorblockN{Prateek Sharma}
+\IEEEauthorblockA{Department of CSE \\
+Manav Rachna International Institute \\
+of Research and Studies \\
+Faridabad, India \\
+tkmhr17@gmail.com}
+\and
+\IEEEauthorblockN{Kushagra Agrawal}
+\IEEEauthorblockA{Department of CSE \\
+Manav Rachna International Institute \\
+of Research and Studies \\
+Faridabad, India \\
+agrawal\_kushagra@rediffmail.com}
+}
+
+\maketitle
+
+\begin{abstract}
+Large language model (LLM) desktop agents differ in how they balance data locality, hardware demand, network dependence, and task capability. This paper documents and compares two implemented agents with different inference arrangements: ARIA, which uses a locally hosted Llama 3 8B model through Ollama, and Mark-XXXIX, which uses Google's Gemini API. The comparison considers natural-language command interpretation, task execution, response latency, resource use, and data locality. It also describes system-level differences that can affect end-to-end outcomes, including tool inventory, memory persistence, visual input, voice processing, and error recovery. These differences mean the comparison characterizes two complete implementations rather than isolating inference location as a single causal variable. The manuscript reports results from a 280-prompt evaluation across six task categories; those numerical claims require traceable prompt-level records and a clearly documented scoring procedure to be independently reproducible. The paper emphasizes implementation details, practical trade-offs, and validity limits relevant to choosing local, cloud-based, or hybrid desktop-agent architectures. Related prototypes developed in the same engineering effort are discussed as context and are not treated as additional benchmark subjects without equivalent evaluation evidence.
+\end{abstract}
+
+\end{abstract}
+
+\begin{IEEEkeywords}
+Desktop Automation, Large Language Models, Local Inference, Ollama, Cloud API, Gemini, Privacy, Comparative Evaluation, Human-Computer Interaction.
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+Desktop automation agents --- software that interprets natural-language instructions and translates them into file-system operations, application control, and web actions --- depend critically on one upstream component: the language model that performs intent interpretation and planning. That model can be hosted locally on the user's own hardware or accessed remotely through a cloud API, and this single choice cascades into nearly every other property of the system: privacy, latency, capability ceiling, hardware requirements, and offline availability.
+
+Cloud-hosted assistants such as Amazon Alexa, Google Assistant, and Apple Siri have demonstrated that natural-language interfaces can reliably drive simple task execution at scale \cite{ref1}. Their reliance on remote inference, however, means every command --- including ones that reference local file names, folder structures, or personal documents --- is transmitted off-device, a meaningful and frequently underexamined cost for users automating sensitive file operations. Conversely, locally hosted open-weight models such as llama3 \cite{ref11}, made practically deployable on consumer hardware through quantization \cite{ref20} and runtimes such as Ollama \cite{ref2}, avoid this exposure entirely but inherit the capability ceiling of whatever model fits within the user's available GPU memory.
+
+Robotic Process Automation (RPA) platforms such as UiPath \cite{ref3} sidestep the inference question by relying on explicitly authored workflows and element selectors: reliable within their configured scope, but unable to interpret novel natural-language commands or generalize to unseen applications without manual reconfiguration. LLM-based agent frameworks --- ReAct \cite{ref4}, AutoGPT, and tool-augmented systems more broadly \cite{ref5} --- have shown that language models can reason over a tool inventory, decompose a goal into steps, and execute multi-step plans with much less upfront configuration, but are largely built and evaluated against frontier cloud models, leaving local-model viability for everyday desktop automation comparatively under-studied.
+
+This paper examines two complete desktop-agent implementations with different inference arrangements. \textbf{ARIA} performs command interpretation locally using an 8-billion-parameter Llama 3 model served through Ollama, with a CustomTkinter interface and a fixed set of file-system, application-launch, search, and browser tools. \textbf{Mark-XXXIX} uses Google's Gemini API \cite{ref12} (including Gemini 2.5 Flash and Flash-Lite), with a PyQt6 interface, persistent JSON memory, real-time voice interaction, and a broader tool inventory that includes browser control, screen vision, and code-generation functionality. Their differing capabilities and control flows are material confounders: the systems are not identical except for inference location, so observed performance differences cannot be attributed to local versus cloud inference alone.
+
+The contributions are: (i) an implementation-grounded description of a local-inference and a cloud-API desktop agent; (ii) an evaluation framework defining six task categories and explicit success criteria; (iii) a comparison of end-to-end outcomes alongside tool inventory, memory, voice, vision, and error-recovery differences; and (iv) a discussion of privacy, hardware requirements, connectivity, and hybrid routing. Quantitative results are presented as measurements reported by the manuscript and should be retained in a camera-ready version only when supported by prompt-level outcomes, timing records, resource logs, and a reproducible scoring procedure.
+
+\section{Related Work}
+
+Cloud-based assistants such as Amazon Alexa \cite{ref1}, Google Assistant, and Apple Siri established the viability of natural-language interfaces for everyday task execution, but all depend on cloud infrastructure for the reasoning step, so every utterance --- including ones referencing personal files, contacts, or schedules --- is processed remotely. RPA platforms including UiPath \cite{ref3}, Blue Prism \cite{ref14}, and Microsoft Power Automate \cite{ref15} enable reliable workflow automation but require explicit workflow definition and brittle, selector-based interaction. Neither ARIA nor Mark-XXXIX requires such upfront authoring; both accept free-form natural language and plan their own action sequence, at the cost of the predictability hand-authored workflows provide.
+
+Among LLM-based autonomous agents, ReAct \cite{ref4} showed that interleaving reasoning traces with tool calls lets an LLM self-correct over a multi-step task; AutoGPT \cite{ref6} extended this to long-horizon, loosely specified goals; and Open Interpreter \cite{ref7}, which executes LLM-generated code on the local machine, and OpenHands \cite{ref8}, which sandboxes an agent inside a development environment, showed the agent loop generalizes beyond chat into direct system interaction. Nearly all are built around frontier cloud models (typically GPT-4- or Claude-class \cite{ref9} APIs); the cost of substituting a locally hosted open-weight model is rarely the subject of evaluation. The comparison here is a controlled instance of that substitution: ARIA is architecturally analogous to these frameworks but commits to local inference, while Mark-XXXIX follows the common cloud-API pattern. Ollama \cite{ref2} and similar runtimes, which handle post-training quantization \cite{ref20}, model management, and a simple HTTP API, are what make ARIA practical on a consumer laptop GPU rather than a research cluster.
+
+Evaluation has largely been driven by dedicated benchmarks --- Mind2Web \cite{ref16} and WebArena \cite{ref17} for web interaction, OSWorld \cite{ref18} for desktop environments, GAIA \cite{ref19} for general assistant tasks --- which target broad agent capability rather than the local-versus-cloud question examined here.
+
+On the multimodal side, SeeAct \cite{ref10} and related vision-language approaches to GUI understanding have shown that models can act on interactive screen elements directly from pixels, without accessibility metadata. Mark-XXXIX incorporates a comparable capability through its screen-processing module, which streams screen or webcam frames to the Gemini API for visual grounding; ARIA has no vision component and operates purely on file-system and application-launch operations, a gap discussed in Section~VI.
+
+Unlike benchmarks that evaluate a single agent or compare cloud models, this paper places two existing desktop-agent implementations side by side. Because their tool inventories, memory mechanisms, modalities, and recovery behavior differ, the comparison is exploratory and implementation-oriented; it does not isolate the causal effect of inference location.
+
+\section{System Architectures}
+
+This section describes both systems as implemented, rather than as idealized designs. Fig.~1 should be read from left to right: user input is interpreted by the selected model, the resulting action or plan is passed to the system's tool-execution layer, and the outcome is returned to the interface. The diagram also highlights where state is retained: ARIA keeps session memory in process RAM, whereas Mark-XXXIX can load and update persistent JSON memory. The two paths differ in inference location and supporting components, so the figure describes complete pipelines rather than a single-variable experiment.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/fig1_architecture.pdf}
+\caption{Architectural comparison of the two systems' end-to-end pipelines, from user input through to tool execution and memory persistence.}
+\label{fig:arch}
+\end{figure}
+
+\subsection{ARIA --- Local Inference Pipeline}
+
+ARIA is a single-process Python application (approximately 1,400 lines across five modules) built around a CustomTkinter interface. Input arrives as typed text or as speech transcribed via the SpeechRecognition library's Google Web Speech backend --- worth noting, since the speech-to-text step, unlike reasoning, is not fully local as implemented.
+
+The command is inserted into a fixed prompt template (\texttt{ai.py}) and sent over HTTP to a locally running Ollama server (\texttt{localhost:11434}) serving an 8-billion-parameter llama3 model. The prompt instructs the model to return a single JSON object containing an action name and argument list, drawn from a closed vocabulary of fourteen actions (\texttt{create\_folder}, \texttt{create\_file}, \texttt{move}, \texttt{delete}, \texttt{open}, \texttt{list}, \texttt{search}, \texttt{rename}, \texttt{read\_file}, \texttt{disk\_info}, \texttt{system\_info}, \texttt{automate}, \texttt{browser\_open}, \texttt{browser\_search}). A bracket-matching routine extracts the first well-formed JSON object from the model's raw output, which is then parsed and validated.
+
+The action is dispatched by a central router (\texttt{engine.py}) to the corresponding function in the tool layer (\texttt{tools.py}), which implements the file-system, application-launch, search, and browser operations using standard Python libraries (\texttt{os}, \texttt{shutil}, \texttt{subprocess}, \texttt{webbrowser}, \texttt{psutil}). Every command and outcome is appended to an in-process dictionary that is ARIA's only memory; it is held in RAM for the session and not persisted, so it does not survive a restart. A feedback mechanism lets the user mark the last action correct or incorrect, though this signal is logged rather than used to retrain the model.
+
+\subsection{Mark-XXXIX --- Cloud API Pipeline}
+
+Mark-XXXIX is a substantially larger open-source project (the \texttt{actions/} and \texttt{agent/} directories alone span over twenty modules) built around a PyQt6 interface and designed for cross-platform operation on Windows, macOS, and Linux. Text input is processed directly; voice input uses a real-time bidirectional audio stream to Google's \texttt{gemini-2.5-flash-native-audio-preview} model rather than a separate transcription step, allowing lower-latency interaction than a discrete speech-to-text-then-LLM pipeline.
+
+A dedicated planner module constructs a structured prompt describing the available tools --- 17 action modules covering file management, browser control, application launching, screen and webcam vision, code generation, game-library management, flight search, reminders, and outbound messaging --- and sends it to the Gemini API (predominantly \texttt{gemini-2.5-flash} and the lower-latency \texttt{gemini-2.5-flash-lite}, with model selection varying by sub-task). It returns an ordered sequence of up to five tool calls per request, each with explicit parameters.
+
+An executor module (\texttt{agent/executor.py}) runs this plan step by step. Distinctively, Mark-XXXIX includes an explicit error-handling and replanning loop: if a tool call fails, an error-analysis routine inspects the failure and can trigger the planner to generate a revised plan rather than surfacing the raw error. It also maintains a persistent JSON memory file (\texttt{memory/long\_term.json}) organized into identity, preference, project, relationship, wish, and note categories, loaded at startup and updated across sessions, capped at approximately 2,200 characters to bound prompt-context cost.
+
+\subsection{Architectural Symmetry and Asymmetry}
+
+Both systems follow a broad input--interpretation--execution pattern, but their implementations are not matched controls. ARIA uses a closed set of fourteen actions and session-only memory; Mark-XXXIX has a broader set of action modules, persistent memory, visual input, and an explicit error-replanning loop. Consequently, measured differences reflect the combined effects of inference location, model configuration, available tools, and agent orchestration. A future causal comparison would need to align the tool set, prompts, memory, modalities, and retry policy while changing only the inference endpoint.
+
+\section{Benchmark Methodology}
+
+So that the comparison is reproducible by a third party with access to both codebases, this section specifies the task taxonomy, success criteria, protocol, and hardware configuration.
+
+\subsection{Hardware and Software Configuration}
+
+All experiments were conducted on a single physical machine (Table~I), so that latency and resource-usage comparisons reflect the inference architecture rather than differences in host hardware.
+
+\begin{table}[htbp]
+\caption{Experimental Hardware and Software Configuration}
+\label{tab:hw}
+\centering
+\small
+\begin{tabular}{p{2.0cm}p{5.5cm}}
+\toprule
+\textbf{Component} & \textbf{Specification} \\
+\midrule
+CPU & AMD Ryzen 7 7840HS --- 16 threads @ 3.8 GHz base clock \\
+System RAM & 16 GB DDR5 \\
+GPU & NVIDIA GeForce RTX 4060 Laptop GPU --- 8 GB dedicated VRAM \\
+Operating System & Windows 11 Home, 64-bit \\
+ARIA --- Local Model & llama3 (8B parameters, default Ollama quantization) via Ollama \\
+ARIA --- Speech Input & Google Web Speech API (via SpeechRecognition library) \\
+Mark-XXXIX --- Cloud Model & Google Gemini 2.5 Flash / Flash-Lite (text and tool planning); gemini-2.5-flash-native-audio-preview (voice) \\
+Python Version & 3.11 \\
+Network Connection & Standard broadband connection, shared for both systems during testing \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Task Taxonomy and Success Criteria}
+
+Tasks were grouped into six categories spanning the capability range both systems claim to support. Table~II defines each category with the binary success criterion applied during scoring. A task passed only if it satisfied its criterion in full; partial completion of a multi-step task was scored as a failure, though completed sub-steps were logged separately.
+
+\begin{table}[htbp]
+\caption{Task Taxonomy and Success Criteria}
+\label{tab:taxonomy}
+\centering
+\small
+\begin{tabular}{p{1.9cm}p{5.6cm}}
+\toprule
+\textbf{Category} & \textbf{Task Definition / Success Criterion} \\
+\midrule
+File Operations & Create, copy, move, or rename a file/folder at a given location. \emph{Pass:} target exists at the destination with the specified name and content unchanged. \\
+File Search & Locate a file by name, partial name, or content across standard user directories. \emph{Pass:} correct path returned, or no match correctly reported. \\
+Application Launch \& Control & Open a named application or perform a basic in-app action (e.g.\ a new tab). \emph{Pass:} application running and, where specified, in the requested state within 10 s. \\
+Multi-Step Composite & Two or more of the above primitives in sequence (e.g.\ ``create a folder, then move three files into it''). \emph{Pass:} all sub-steps complete, in an order consistent with the goal. \\
+GUI Automation & Interact with on-screen elements (buttons, form fields) beyond app launch. \emph{Pass:} the targeted element is identified and the intended interaction occurs. \\
+Web / Information Retrieval & Answer a question or retrieve current information needing web search or general knowledge. \emph{Pass:} the answer is factually correct and responsive. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Prompt Collection, Protocol, and Scoring}
+
+The manuscript reports a pool of 280 natural-language prompts across six categories, weighted toward file operations and search. It states that identical prompt text was issued to both systems on the same machine. To make this protocol reproducible, the final submission should retain the complete prompt list, category assignment, run order, timestamps, system/model versions, and per-system outcome for every prompt. A shared host controls hardware differences but does not control differences in tool availability, memory, planning, or recovery behavior.
+
+Three quantities were recorded per prompt and system: command interpretation accuracy (did the parsed plan match the literal intent, independent of whether execution succeeded), task success (Table~II), and response latency (wall-clock time from submission to final result, including network round-trip for Mark-XXXIX and model load time where applicable for ARIA).
+
+All 280 prompts were scored by a single evaluator (the author) from a transcript of each system's plan, tool calls, and final on-screen or on-disk state. Where feasible, transcripts were scored without reference to which system produced them; this was not possible where the output format itself identified the system (for example, Mark-XXXIX's PyQt6 interface elements in a screen-state log). This single-evaluator design is a limitation discussed in Section~VII.
+
+\section{Results}
+
+\subsection{Task Success Rate by Category}
+
+Fig.~2 reports task success rate for each of the six categories in Table~II, on the identical 280-prompt set for both systems. ARIA is strongest on file operations (94.6\%), where the action space is narrow and well covered by its fixed prompt template. Mark-XXXIX is strongest on web/information retrieval (95.2\%) and application launch and control (95.5\%), categories benefiting from the larger model's broader world knowledge and more flexible planning. ARIA's weakest category is web/information retrieval (71.4\%), consistent with the local pipeline having no dedicated web-search tool comparable to Mark-XXXIX's \texttt{web\_search} action.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/fig8_successrate.pdf}
+\caption{Task success rate by category for both systems on the identical 280-prompt benchmark set.}
+\label{fig:successrate}
+\end{figure}
+
+\subsection{Response Latency and Hardware Resource Usage}
+
+Fig.~3 summarises both. For a simple, single-step file operation, ARIA's pipeline (0.6~s, dominated by direct tool execution once the plan is parsed) is comparable to Mark-XXXIX's single API round trip (0.9~s, dominated by network and inference time). The gap widens for cold-start local inference (4.2~s, reflecting Ollama's model-load overhead when llama3 is not resident in VRAM, versus roughly 1.4~s warm) and narrows again, in the cloud system's favor, for multi-step composite tasks (ARIA: 5.8~s versus Mark-XXXIX: 2.6~s), where the larger model plans more of the task in a single pass rather than requiring sequential re-prompting.
+
+The two architectures also spike different resources. The local pipeline's defining cost is GPU VRAM: llama3 occupies approximately 5.0 GB of the RTX 4060's 8 GB budget while resident, and its process holds the larger share of system RAM as well (3.1 GB versus 0.7 GB steady state). The cloud pipeline's defining cost is network dependency, sending an estimated 38 KB of request payload per reasoning call on average with no GPU footprint; ARIA's reasoning step sends no data over the network at all.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/fig3_latency_hw.pdf}
+\caption{Latency and hardware footprint on the Table~I platform: (a) median response latency by task mode; (b) peak GPU VRAM; (c) peak system RAM; (d) average network payload per reasoning call. Not every mode applies identically to both architectures.}
+\label{fig:latencyhw}
+\end{figure}
+
+\subsection{Summary Comparison}
+
+Table~III consolidates these results and Table~IV the architectural differences underlying them. Viewed across six axes --- task success, privacy/data locality, setup simplicity, response speed, capability breadth, and offline availability, the latter four assigned qualitatively from Table~IV --- the systems are not uniformly better or worse than one another, but occupy different, largely complementary regions of the design space.
+
+\begin{table}[htbp]
+\caption{Overall Performance Comparison}
+\label{tab:overall}
+\centering
+\small
+\begin{tabular}{p{2.25cm}p{1.15cm}p{1.25cm}p{2.15cm}}
+\toprule
+\textbf{Metric} & \textbf{ARIA (Local)} & \textbf{Mark-XXXIX (Cloud)} & \textbf{Notes} \\
+\midrule
+Overall Task Success Rate & 83.0\% & 89.1\% & All 280 prompts, 6 categories \\
+Command Interpretation Accuracy & 87.4\% & 91.8\% & Plan matches literal request \\
+Median Latency (simple op.) & 0.6 s--1.4 s & 0.9 s & File op vs.\ warm-GPU call; single API call \\
+Median Latency (multi-step) & 5.8 s & 2.6 s & End-to-end, all sub-steps \\
+Peak GPU VRAM Usage & 5.0 GB & 0.0 GB & Local model resident during inference \\
+Peak System RAM Usage & 3.1 GB & 0.7 GB & Process, steady state \\
+Network Payload per Request & 0 KB & $\sim$38 KB (avg.) & Cloud needs continuous connectivity \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\caption{Architecture Comparison}
+\label{tab:archcomp}
+\centering
+\small
+\begin{tabular}{p{1.7cm}p{2.5cm}p{2.8cm}}
+\toprule
+\textbf{Dimension} & \textbf{ARIA} & \textbf{Mark-XXXIX} \\
+\midrule
+Inference location & On-device (GPU) & Remote (Google data center) \\
+Network dependency & None for reasoning & Required for every reasoning step \\
+Tool inventory & 14 actions & 17 modules (several multi-function) \\
+Memory persistence & In-RAM only, session-scoped & Persistent JSON, cross-session \\
+Error recovery & Not implemented & Explicit error-handler + replan loop \\
+Vision / screen understanding & Not implemented & Implemented (screen + webcam) \\
+Platform support & Windows (tested) & Windows, macOS, Linux \\
+GUI framework & CustomTkinter & PyQt6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Discussion}
+
+\subsection{Privacy Versus Capability}
+
+The results in Section~V make the central trade-off concrete. ARIA's local pipeline guarantees that no file name, folder path, or document content referenced in a command leaves the user's machine during reasoning; this is a structural property of the architecture, not a configurable setting, since the model runs on-device. The cost is visible in Fig.~2: on the category most dependent on broad world knowledge (web/information retrieval), ARIA trails Mark-XXXIX by over 23 percentage points. A user automating purely local file-management tasks is well served by the local pipeline; one who frequently needs the agent to answer general questions or research online is not.
+
+ARIA's privacy guarantee is also partial rather than absolute as implemented: voice input is transcribed through Google's cloud speech-to-text API, so spoken commands --- though not the reasoning over them --- do leave the device. A fully offline configuration would require a local model such as Whisper \cite{ref13}.
+
+\subsection{Limitations of Local and Cloud Inference}
+
+Beyond the capability gap on knowledge-intensive tasks, the local pipeline carries two costs easily overlooked in an accuracy-only comparison (Fig.~3). First, GPU memory is a hard constraint: llama3 occupies roughly five of the eight gigabytes of VRAM on the test machine's RTX 4060, foreclosing a second concurrent model --- for instance, a vision model for screen understanding --- without active memory management ARIA does not implement. Second, cold-start latency is substantial: response time rises from roughly 1.4~s to 4.2~s when the model is not resident in VRAM, noticeable in interactive use and with no equivalent on the cloud side, where the served model is always warm.
+
+Mark-XXXIX's reliance on the Gemini API, conversely, makes the system unusable without an active internet connection --- not degraded, but non-functional, since even simple file operations are planned through the same cloud call as complex ones: a single point of failure a purely local system does not share. Cost is a further consideration outside this paper's measurements: Google's free API tier sufficed for the 280-prompt evaluation, but sustained heavy use of a metered API carries an operating cost a local model, once downloaded, does not.
+
+\subsection{The Case for Hybrid Architectures}
+
+Neither system is strictly dominant, and the per-category results in Fig.~2 suggest a division of labor rather than a winner-take-all conclusion. A hybrid architecture routing file-system and application-control commands to a local model --- the categories where ARIA already performs competitively and where keeping data on-device matters most --- while sending open-ended, knowledge-intensive, or multi-step planning to a cloud API would plausibly capture much of the privacy benefit of the local approach and much of the capability benefit of the cloud one at once. Neither system implements such request-level routing today; each commits fully to one strategy. We view this as the most direct practical implication of the comparison.
+
+\subsection{Real-World Deployment Considerations}
+
+Two further considerations appear in Table~IV but not in the headline numbers. Mark-XXXIX's PyQt6 interface and cloud dependency make it deployable unmodified on Windows, macOS, and Linux, while ARIA has only been tested on Windows and relies on a locally running Ollama instance, raising setup burden. Mark-XXXIX's explicit replanning loop is a reliability feature absent from ARIA, where a failed tool call is reported but not retried. Both are engineering maturity differences as much as consequences of the local-versus-cloud choice; either system could adopt the other's solution without changing its inference architecture.
+
+\section{Limitations and Threats to Validity}
+
+Several limitations should inform how these conclusions are read. In addition, the numerical results in this manuscript must be reconciled with the underlying prompt-level records before submission: the final artifact should include or archive the 280 prompts, per-system binary outcomes, interpretation scores, latency observations, and resource-measurement method. Summary percentages alone are insufficient to reconstruct the evaluation, and the denominator used for each metric must be stated explicitly. \textbf{Single evaluator:} all $280 \times 2$ outcomes were scored by one person (the author); no second rater scored a subset, so inter-rater reliability could not be measured and consistent bias toward one system cannot be ruled out, despite the blinding of Section~IV-C. \textbf{Single hardware and network configuration:} all measurements come from one machine and one connection (Table~I); cloud-API latency especially is sensitive to network conditions varying by user, location, and time of day, so the latency figures are characteristic of this setup rather than universal. \textbf{Prompt set authored by one person:} the 280 prompts were written by the author rather than sampled from observed user behavior, and could favor phrasings one system's template handles more naturally. \textbf{Moving model versions:} both llama3 and the Gemini API are under active development, so absolute numbers --- though not the qualitative trade-offs --- should be expected to shift. \textbf{No statistical testing:} given the per-category sample size ($n = 36$--72) and the exploratory nature of the comparison, we report percentages rather than significance tests, so category-level differences of a few points are suggestive only. \textbf{Composite scores:} four of the six axes (privacy/data locality, setup simplicity, capability breadth, offline availability) are qualitative scores from architectural inspection rather than independent measurement.
+
+None of these undermine the central qualitative finding --- that local and cloud inference involve a real and measurable trade-off rather than one architecture being strictly superior --- but they bound the precision with which the percentage figures in Section~V should be interpreted.
+
+\section{Conclusion and Future Work}
+
+This paper documents and compares two desktop automation agents with different inference arrangements: ARIA, using a locally hosted Llama 3 model through Ollama, and Mark-XXXIX, using Google's Gemini API. Their tool inventories, memory, modalities, and error-recovery mechanisms also differ, so the reported end-to-end outcomes should not be interpreted as a controlled estimate of the effect of inference location alone. On an identical set of 280 natural-language prompts across six task categories, the two systems achieved overall task success rates of 83.0\% and 89.1\% and command interpretation accuracies of 87.4\% and 91.8\% respectively, with the gap concentrated in categories requiring broad world knowledge or web access rather than in core file-management operations, where the local system was competitive or stronger.
+
+The architectural comparison and the measurements in Fig.~3 make the trade-off explicit: local inference offers a structural privacy guarantee and freedom from network dependency, at the cost of a fixed GPU memory footprint, the larger system-RAM share, and a measurable capability gap on knowledge-intensive tasks; cloud inference offers broader capability and lower hardware requirements, at the cost of a hard network dependency and the transmission of every command --- including ones referencing local files --- to a third-party API. Neither dominates across all six categories, which we read as evidence against treating this as a settled question, and in favor of a trade-off made deliberately in light of a deployment's privacy requirements, connectivity assumptions, and hardware.
+
+Future work follows from these limitations. Chief among them is \textbf{hybrid routing}: a request-level router sending file-system and application-control commands to a local model while routing knowledge-intensive or multi-step planning to a cloud API, to test whether the privacy and capability benefits identified separately here can be captured simultaneously. Also indicated are \textbf{multi-rater scoring}, repeating the Section~IV protocol with at least two independent, blinded evaluators; a \textbf{fully local speech pipeline for ARIA}, replacing the cloud speech-to-text step with an on-device model such as Whisper \cite{ref13}; \textbf{larger local models}, including 70B-parameter variants where hardware permits or quantization-aware scheduling \cite{ref20} allowing a vision model alongside the reasoning model within an 8 GB VRAM budget; \textbf{naturalistic prompt collection} to validate the task taxonomy against actual usage; and \textbf{cost modeling}, extending the resource comparison with a longitudinal API cost projection alongside the one-time hardware cost implied by ARIA's GPU requirement.
+
+% AUTHOR VERIFICATION REQUIRED BEFORE CAMERA-READY:
+% Confirm that all reported percentages, category rates, latency/resource figures,
+% and the stated 280-prompt protocol are supported by retained raw records.
+% The reported overall percentages do not map cleanly to integer counts out of
+% exactly 280 binary trials; verify denominators, missing runs, and rounding.
+\begin{thebibliography}{00}
+\footnotesize
+\setlength{\itemsep}{0pt}
+\bibitem{ref1} V. Kepuska and G. Bohouta, ``Next-generation of virtual personal assistants (Microsoft Cortana, Apple Siri, Amazon Alexa and Google Home),'' in \emph{Proc. IEEE CCWC}, 2018, pp. 99--103.
+\bibitem{ref2} Ollama Team, ``Ollama: Get up and running with large language models locally,'' \url{https://ollama.ai}, 2024, computer software.
+\bibitem{ref3} UiPath Inc., ``UiPath platform documentation,'' \url{https://docs.uipath.com}, 2023.
+\bibitem{ref4} S. Yao \emph{et al.}, ``ReAct: Synergizing reasoning and acting in language models,'' in \emph{Proc. Int. Conf. Learn. Representations (ICLR)}, 2023.
+\bibitem{ref5} T. Schick \emph{et al.}, ``Toolformer: Language models can teach themselves to use tools,'' \emph{Adv. Neural Inf. Process. Syst.}, vol. 36, 2023.
+\bibitem{ref6} S. Gravitas, ``AutoGPT: An autonomous GPT-4 experiment,'' \url{https://github.com/Significant-Gravitas/AutoGPT}, 2023, computer software.
+\bibitem{ref7} J. Killian, R. Wang, and contributors, ``Open interpreter: A natural language interface for computers,'' \url{https://github.com/OpenInterpreter/open-interpreter}, 2024, computer software.
+\bibitem{ref8} OpenHands Team, ``OpenHands: An open platform for AI software developers as generalist agents,'' \emph{arXiv:2407.16741}, 2024.
+\bibitem{ref9} Anthropic, ``Claude API documentation,'' \url{https://docs.anthropic.com}, 2024.
+\bibitem{ref10} B. Zheng, B. Gou, J. Kil, H. Sun, and Y. Su, ``SeeAct: GPT-4V(ision) is a generalist web agent, if grounded,'' in \emph{Proc. 41st Int. Conf. Mach. Learn. (ICML)}, 2024.
+\bibitem{ref11} A. Grattafiori \emph{et al.}, ``The Llama 3 herd of models,'' \emph{arXiv:2407.21783}, 2024.
+\bibitem{ref12} Gemini Team, Google, ``Gemini: A family of highly capable multimodal models,'' \emph{arXiv:2312.11805}, 2023.
+\bibitem{ref13} A. Radford \emph{et al.}, ``Robust speech recognition via large-scale weak supervision,'' in \emph{Proc. 40th Int. Conf. Mach. Learn. (ICML)}, PMLR 202, 2023, pp. 28492--28518.
+\bibitem{ref14} SS\&C Blue Prism, ``SS\&C Blue Prism documentation,'' \url{https://documentation.blueprism.com}, 2024.
+\bibitem{ref15} Microsoft Corp., ``Microsoft Power Automate documentation,'' \url{https://learn.microsoft.com/power-automate}, 2024.
+\bibitem{ref16} X. Deng \emph{et al.}, ``Mind2Web: Towards a generalist agent for the web,'' \emph{Adv. Neural Inf. Process. Syst.}, vol. 36, 2023.
+\bibitem{ref17} S. Zhou \emph{et al.}, ``WebArena: A realistic web environment for building autonomous agents,'' in \emph{Proc. Int. Conf. Learn. Representations (ICLR)}, 2024.
+\bibitem{ref18} T. Xie \emph{et al.}, ``OSWorld: Benchmarking multimodal agents for open-ended tasks in real computer environments,'' \emph{Adv. Neural Inf. Process. Syst.}, vol. 37, 2024.
+\bibitem{ref19} G. Mialon \emph{et al.}, ``GAIA: A benchmark for general AI assistants,'' in \emph{Proc. Int. Conf. Learn. Representations (ICLR)}, 2024.
+\bibitem{ref20} E. Frantar \emph{et al.}, ``GPTQ: Accurate post-training quantization for generative pre-trained transformers,'' in \emph{Proc. Int. Conf. Learn. Representations (ICLR)}, 2023.
+\end{thebibliography}
+
+\end{document}
